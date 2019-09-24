@@ -492,7 +492,7 @@ void LFRArr::RunLFRA(Flow * f, bess::Packet * pkt, int * err) {
   if (before(seq, f->expected_next) || seq == f->expected_next) {
 
     Enqueue(f, pkt, err);
-    f->expected_next = seq + psize;
+    // f->expected_next = seq + psize;
 
     if (!f->pq.empty()) {
       bess::Packet * p = f->pq.top();
@@ -541,16 +541,29 @@ void LFRArr::RunLFRA(Flow * f, bess::Packet * pkt, int * err) {
     if (lowest_seq <= seq) {
 
       f->pq.pop();
-      Enqueue(f, pkt, err);
+      Enqueue(f, p, err);
+
+      // modification: output all the consecutive packets
+      if (!f->pq.empty()) {
+        bess::Packet * p = f->pq.top();
+        while (LFRArr::GetSeq(p) == f->expected_next) {
+          f->pq.pop();
+          Enqueue(f, p, err);
+          if (!f->pq.empty()) {
+            p = f->pq.top();
+          }
+          else {
+            break;
+          }
+        }
+      }
+      
       f->pq.push(pkt);
       
     }
 
     else {
-
       Enqueue(f, pkt, err);
-      
-
     }
   }
   f->timer = get_epoch_time();
