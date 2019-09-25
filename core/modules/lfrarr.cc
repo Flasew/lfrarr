@@ -486,7 +486,6 @@ void LFRArr::RunLFRA(Flow * f, bess::Packet * pkt, int * err) {
   // end
   const Ipv4 * const ip = GetIpv4Header(pkt);
   const Tcp * const tcp = (const Tcp *)(((const char *)ip) + (ip->header_length * 4));
-  uint16_t psize = ip->length.value() - ((unsigned int)ip->header_length + tcp->offset) * 4;
   uint32_t seq = tcp->seq_num.value();
 
   if (before(seq, f->expected_next) || seq == f->expected_next) {
