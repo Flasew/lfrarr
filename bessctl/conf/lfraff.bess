@@ -1,0 +1,12 @@
+enp1s0::PMDPort(port_id=0, num_inc_q=1, num_out_q=1)
+netin::PortInc(port=enp1s0)
+netout::PortOut(port=enp1s0)
+udocker::VPort(ifname='vport', docker='vport_test', ip_addrs=['10.0.0.4/24'])
+dockerin::PortInc(port=udocker)
+dockerout::PortOut(port=udocker)
+
+netin->bpf::BPF(filters=[{"filter": "ip proto 6", "gate": 1}])
+#,{"filter": "not proto tcp", "gate": 2}])
+bpf:1->lfra::LFRArr(num_flows=4096, max_flow_queue_size=8192, num_oo_pkt=1024, flow_ttl=1000)->dockerout
+bpf:2->dockerout
+dockerin->netout
