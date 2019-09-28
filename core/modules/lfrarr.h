@@ -255,6 +255,7 @@ class LFRArr final : public Module {
 
   void RunLFRA(Flow * f, bess::Packet * pkt, int * err);
 
+  void UpdateExpected(Flow * f, bess::Packet * p);
 
   // max size of a flow's queue before the module will start dropping
   // the flow's packets

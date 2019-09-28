@@ -39,6 +39,8 @@
 #include "../utils/ip.h"
 #include "../utils/udp.h"
 
+#define _MY_DEBUG_ 
+
 static uint32_t RoundToPowerTwo(uint32_t v) {
   v--;
   v |= v >> 1;
@@ -184,7 +186,9 @@ void LFRArr::ProcessBatch(Context *, bess::PacketBatch *batch) {
   int cnt = batch->cnt();
   for (int i = 0; i < cnt; i++) {
 
+#ifdef _MY_DEBUG_
     std::cerr << "[DEBUG] New packet entered LFRA" << std::endl;
+#endif
 
     bess::Packet *pkt = batch->pkts()[i];
 
@@ -198,19 +202,25 @@ void LFRArr::ProcessBatch(Context *, bess::PacketBatch *batch) {
       if (llring_full(flow_ring_)) {
         bess::Packet::Free(pkt);
 
+#ifdef _MY_DEBUG_
         std::cerr << "[DEBUG] Flow buffer full, packed discarded" << std::endl;
+#endif
 
       } else {
         AddNewFlow(pkt, id, &err);
 
+#ifdef _MY_DEBUG_
         std::cerr << "[DEBUG] Adding new flow" << std::endl;
+#endif
 
         assert(err == 0);
       }
     } else {
       RunLFRA(it->second, pkt, &err);
 
+#ifdef _MY_DEBUG_
       std::cerr << "[DEBUG] Running LFRA" << std::endl;
+#endif
 
       assert(err == 0);
     }
@@ -234,7 +244,9 @@ struct task_result LFRArr::RunTask(Context *ctx, bess::PacketBatch *batch,
   assert(err >= 0);  // TODO(joshua) do proper error checking
 
   if (total_bytes > 0) {
+#ifdef _MY_DEBUG_
     std::cerr << "[DEBUG] RunTask - Handing to next module" << std::endl;
+#endif
     RunNextModule(ctx, batch);
   }
 
@@ -246,7 +258,7 @@ struct task_result LFRArr::RunTask(Context *ctx, bess::PacketBatch *batch,
 
 uint32_t LFRArr::GetNextBatch(bess::PacketBatch *batch, int *err) {
 
-  std::cerr << "[DEBUG] Entering GetNextBatch" << std::endl;
+  //std::cerr << "[DEBUG] Entering GetNextBatch" << std::endl;
 
   Flow *f;
   uint32_t total_bytes = 0;
@@ -301,14 +313,14 @@ uint32_t LFRArr::GetNextBatch(bess::PacketBatch *batch, int *err) {
     }
   }
 
-  std::cerr << "[DEBUG] Exiting GetNextBatch, total_bytes=" << total_bytes << std::endl;
+  //std::cerr << "[DEBUG] Exiting GetNextBatch, total_bytes=" << total_bytes << std::endl;
 
   return total_bytes;
 }
 
 LFRArr::Flow *LFRArr::GetNextFlow(int *err) {
 
-  std::cerr << "[DEBUG] Entering GetNextFlow" << std::endl;
+  // std::cerr << "[DEBUG] Entering GetNextFlow" << std::endl;
 
   Flow *f;
   bess::Packet * p = nullptr;
@@ -317,19 +329,30 @@ LFRArr::Flow *LFRArr::GetNextFlow(int *err) {
   if (!current_flow_) {
     *err = llring_dequeue(flow_ring_, reinterpret_cast<void **>(&f));
     if (*err < 0) {
+#ifdef _MY_DEBUG_
+      std::cerr << "[DEBUG] GetNextFlow dequeue error" << std::endl;
+#endif
       return nullptr;
     }
 
     if (llring_empty(f->queue) && !f->next_packet) {
 
+      //std::cerr << "[DEBUG] GetNextFlow: now=" << now 
+      //  << ", f->timer=" << f->timer 
+      //  << ", diff=" << (now - f->timer) << std::endl; 
+
       // if the flow expired, remove it
       if (now - f->timer > flow_timeout_) {
 
+#ifdef _MY_DEBUG_
         std::cerr << "[DEBUG] GetNextFlow: Timer expired" << std::endl;
+#endif
         
         if (f->pq.empty()) {
           RemoveFlow(f);
+#ifdef _MY_DEBUG_
           std::cerr << "[DEBUG] GetNextFlow: Flow removed" << std::endl;
+#endif
           return nullptr;
         }
         else {
@@ -340,7 +363,9 @@ LFRArr::Flow *LFRArr::GetNextFlow(int *err) {
           }
           *err = llring_dequeue(f->queue, reinterpret_cast<void **>(&p));
           f->next_packet = p;
+#ifdef _MY_DEBUG_
           std::cerr << "[DEBUG] GetNextFlow: PQ evicted" << std::endl;
+#endif
         }
       } 
 
@@ -359,16 +384,20 @@ LFRArr::Flow *LFRArr::GetNextFlow(int *err) {
     current_flow_ = nullptr;
   }
 
+#ifdef _MY_DEBUG_
   std::cerr << "[DEBUG] Exiting GetNextFlow, flow info: " 
     << f->id.src_ip << ":" << f->id.src_port << " -> " 
     << f->id.dst_ip << ":" << f->id.dst_port << std::endl;
+#endif
 
   return f;
 }
 
 uint32_t LFRArr::GetNextPackets(bess::PacketBatch *batch, Flow *f, int *err) {
 
-  std::cerr << "[DEBUG] Entering GetNextPackets" << total_bytes << std::endl;
+#ifdef _MY_DEBUG_
+  std::cerr << "[DEBUG] Entering GetNextPackets" << std::endl;
+#endif
 
   uint32_t total_bytes = 0;
   bess::Packet *pkt;
@@ -395,7 +424,9 @@ uint32_t LFRArr::GetNextPackets(bess::PacketBatch *batch, Flow *f, int *err) {
     batch->add(pkt);
   }
 
+#ifdef _MY_DEBUG_
   std::cerr << "[DEBUG] Exiting GetNextPackets, total_bytes=" << total_bytes << std::endl;
+#endif
 
   return total_bytes;
 }
@@ -418,7 +449,9 @@ LFRArr::FlowId LFRArr::GetId(bess::Packet *pkt) {
 
 void LFRArr::AddNewFlow(bess::Packet *pkt, FlowId id, int *err) {
 
+#ifdef _MY_DEBUG_
   std::cerr << "[DEBUG] Adding Flow" << std::endl;
+#endif
   // creates flow
   Flow *f = new Flow(id);
 
@@ -430,24 +463,30 @@ void LFRArr::AddNewFlow(bess::Packet *pkt, FlowId id, int *err) {
   }
 
   flows_.Insert(id, f);
+#ifdef _MY_DEBUG_
   const Tcp * const tcp = GetTCPHeader(pkt);
 
   uint32_t seq = tcp->seq_num.value();
   // Assumes we only get one SYN and the sequence number of it doesn't change
   // for any reason.  Also assumes we have no data in the SYN.
+  /*
   if (tcp->flags & Tcp::Flag::kSyn) {
     f->expected_next = seq + 1;
   }
   else {
     f->expected_next = seq;
   }
+  */
   std::cerr << "[DEBUG] AddFlow: flow info: " 
     << f->id.src_ip << ":" << f->id.src_port << " -> " 
     << f->id.dst_ip << ":" << f->id.dst_port << std::endl;
   std::cerr << "[DEBUG] AddFlow: init seq " << seq << ", SYN set " 
-    << tcp->flags & Tcp::Flag::kSyn << std::endl;
+    << (tcp->flags & Tcp::Flag::kSyn) << std::endl;
+#endif
 
-  RunLFRA(f, pkt, err);
+  //RunLFRA(f, pkt, err);
+  Enqueue(f, pkt, err);
+  UpdateExpected(f,pkt);
 
   if (*err != 0) {
     return;
@@ -505,19 +544,13 @@ void LFRArr::Enqueue(Flow *f, bess::Packet *newpkt, int *err) {
 
   *err = llring_enqueue(f->queue, reinterpret_cast<void *>(newpkt));
 
+#ifdef _MY_DEBUG_
   const Ipv4 * const ip = GetIpv4Header(newpkt);
-  const Tcp * const tcp = (const Tcp *)(((const char *)ip) + (ip->header_length * 4));
-  uint16_t psize = ip->length.value() - ((unsigned int)ip->header_length + tcp->offset) * 4;
+  const Tcp * const tcp = (Tcp *)(((const char *)ip) + (ip->header_length * 4));
   uint32_t seq = tcp->seq_num.value();
+  std::cerr << "[DEBUG] Enqueued packet with seq=" << seq << std::endl;
+#endif
 
-  auto old_en = f->expected_next;
-  f->expected_next = seq + psize;
-
-  std::cerr << "[DEBUG] Enqueue: flow info: " 
-    << f->id.src_ip << ":" << f->id.src_port << " -> " 
-    << f->id.dst_ip << ":" << f->id.dst_port << std::endl;
-  std::cerr << "[DEBUG] Enqueue: expected_next updated from "
-    << old_en << " to " << f->expected_next << std::endl;
 
   if (*err == 0) {
     f->timer = get_epoch_time();
@@ -538,29 +571,38 @@ void LFRArr::RunLFRA(Flow * f, bess::Packet * pkt, int * err) {
   //     Increment expected_num by 1}
   // end
 
+#ifdef _MY_DEBUG_
   std::cerr << "[DEBUG] Running LFRA on flow "
     << f->id.src_ip << ":" << f->id.src_port << " -> " 
     << f->id.dst_ip << ":" << f->id.dst_port << std::endl;
+#endif
 
   const Ipv4 * const ip = GetIpv4Header(pkt);
-  const Tcp * const tcp = (const Tcp *)(((const char *)ip) + (ip->header_length * 4));
+  const Tcp * const tcp = (Tcp *)(((const char *)ip) + (ip->header_length * 4));
   uint32_t seq = tcp->seq_num.value();
 
+#ifdef _MY_DEBUG_
   std::cerr << "[DEBUG] LFRA: incoming SEQ " << seq 
     << ", expected_next " << f->expected_next << std::endl;
+#endif
 
   if (before(seq, f->expected_next) || seq == f->expected_next) {
 
+#ifdef _MY_DEBUG_
     std::cerr << "[DEBUG] LFRA: Case in sequence" << std::endl;
+#endif
 
     Enqueue(f, pkt, err);
-    // f->expected_next = seq + psize;
+    UpdateExpected(f, pkt);
 
     if (!f->pq.empty()) {
       bess::Packet * p = f->pq.top();
       while (LFRArr::GetSeq(p) == f->expected_next) {
         f->pq.pop();
+
         Enqueue(f, p, err);
+        UpdateExpected(f, p);
+
         if (!f->pq.empty()) {
           p = f->pq.top();
         }
@@ -577,7 +619,9 @@ void LFRArr::RunLFRA(Flow * f, bess::Packet * pkt, int * err) {
   // end
   else if (f->pq.size() < max_ofo_buffsize_) {
 
+#ifdef _MY_DEBUG_
     std::cerr << "[DEBUG] LFRA: re-sequencing buffer is not full" << std::endl;
+#endif
     f->pq.push(pkt);
 
   }
@@ -597,7 +641,9 @@ void LFRArr::RunLFRA(Flow * f, bess::Packet * pkt, int * err) {
   // end
   
   else {
+#ifdef _MY_DEBUG_
     std::cerr << "[DEBUG] LFRA: re-sequencing buffer full" << std::endl;
+#endif
 
     bess::Packet * p = f->pq.top();
     uint32_t lowest_seq = LFRArr::GetSeq(p);
@@ -605,14 +651,19 @@ void LFRArr::RunLFRA(Flow * f, bess::Packet * pkt, int * err) {
     if (lowest_seq <= seq) {
 
       f->pq.pop();
+
       Enqueue(f, p, err);
+      UpdateExpected(f, p);
 
       // modification: output all the consecutive packets
       if (!f->pq.empty()) {
         bess::Packet * p = f->pq.top();
         while (LFRArr::GetSeq(p) == f->expected_next) {
           f->pq.pop();
+
           Enqueue(f, p, err);
+          UpdateExpected(f, p);
+          
           if (!f->pq.empty()) {
             p = f->pq.top();
           }
@@ -633,6 +684,27 @@ void LFRArr::RunLFRA(Flow * f, bess::Packet * pkt, int * err) {
   f->timer = get_epoch_time();
 
   return;
+}
+
+void LFRArr::UpdateExpected(Flow * f, bess::Packet * p) {
+  const Ipv4 * const ip = GetIpv4Header(p);
+  const Tcp * const tcp = (const Tcp *)(((const char *)ip) + (ip->header_length * 4));
+  uint32_t seq = tcp->seq_num.value();
+  uint16_t psize = ip->length.value() - ((unsigned int)ip->header_length + tcp->offset) * 4;
+
+#ifdef _MY_DEBUG_
+  uint32_t old_en = f->expected_next;
+#endif
+  if (tcp->flags & Tcp::Flag::kSyn) {
+    f->expected_next = seq + 1;
+  }
+  else {
+    f->expected_next = seq + psize;
+  }
+#ifdef _MY_DEBUG_
+  std::cerr << "[DEBUG] UpdateExpectedNext: expected_next updated from "
+    << old_en << " to " << f->expected_next << std::endl;
+#endif
 }
 
 // static inline int InsertOrEnqueue(Flow * f,
