@@ -85,12 +85,22 @@ class LFRArr final : public Module {
       return (int32_t)(LFRArr::GetSeq(p1)-LFRArr::GetSeq(p2)) > 0;
     }
   };
+
   // stores the metrics of the flow, a timer and the queue to store the packets
   // in.
   struct Flow {
+    // enum FlowState
+    // {
+    //   ACTIVE_MERGE;
+    //   LOSS_RECOVERY;
+    //   // DEAD_FLOW;
+    // };
+    // FlowState state;
     double timer;               // to determine if TTL should be used
+    double pq_timer;
     FlowId id;                  // allows the flow to remove itself from the map
     uint32_t expected_next;
+    uint32_t lost_seq;
     struct llring *queue;       // queue to store current packets for flow
     bess::Packet *next_packet;  // buffer to store next packet from the queue.
     std::priority_queue<bess::Packet *, 
@@ -178,14 +188,6 @@ class LFRArr final : public Module {
 
  private:
   static uint32_t GetSeq(const bess::Packet* const pkt);
-  //  {
-  //   const Ethernet *eth1 = pkt->head_data<const Ethernet *>();
-  //   const Ipv4 *ip1 = (const Ipv4 *)(eth1 + 1);
-  //   const Tcp *tcp1 =
-  //     (const Tcp *)(((const char *)ip1) + (ip1->header_length * 4));
-  //   return tcp1->seq_num.value();
-  // }
-
 
   //  Sets the maximum size that any Flows queue can get before the module will
   //  start dropping the flows packets. Takes the maximum size for any Flows
@@ -195,6 +197,7 @@ class LFRArr final : public Module {
   CommandResponse SetOOQueueSize(uint32_t queue_size);
   CommandResponse SetFlowTimeout(double tout);
   CommandResponse SetMaxFlowNum(uint32_t flow_n);
+  CommandResponse SetOOTimeout(double tout);
 
   //  Creates a new larger llring queue of the specifed size and moves over all
   //  of the entries from the old queue and frees the old_queue. Takes a pointer
@@ -267,6 +270,7 @@ class LFRArr final : public Module {
   uint32_t max_ofo_buffsize_;
 
   double flow_timeout_;
+  double oo_timeout_;
 
   // state map used to reunite packets with their flow
   CuckooMap<FlowId, Flow *, Hash, EqualTo> flows_;

@@ -1184,6 +1184,7 @@ message LFRArrArg {
   uint32 max_flow_queue_size = 2; /// the max size that any Flows queue can get
   uint32 num_oo_pkt = 3; /// number of allowed out of order packets buffer size
   double flow_ttl = 4; /// flow time out value, us
+  double oo_timeout = 5; /// out of order packet timeout 
 }
 
 message LFRArrMaxFlowQueueSizeArg {
@@ -1201,6 +1202,11 @@ message LFRArrFlowTimeoutArg {
 message LFRArrMaxFlowNumArg {
   uint32 max_flow_num = 1;  /// the max size that any Flows queue can get
 }
+
+message LFRArrOOTimeoutArg {
+  double oo_timeout = 1;  /// the max size that any Flows queue can get
+}
+
 
 // {"set_max_flow_queue_size", "LFRArrMaxFlowQueueSizeArg",
 //  MODULE_CMD_FUNC(&LFRArr::CommandMaxFlowQueueSize), Command::THREAD_UNSAFE},

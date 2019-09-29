@@ -66,7 +66,9 @@ const Commands LFRArr::cmds = {
     {"set_flow_timeout", "LFRArrFlowTimeoutArg",
      MODULE_CMD_FUNC(&LFRArr::CommandFlowTimeout), Command::THREAD_UNSAFE},
     {"set_max_flow_number", "LFRArrMaxFlowNumArg",
-     MODULE_CMD_FUNC(&LFRArr::CommandMaxFlowNum), Command::THREAD_UNSAFE}};
+     MODULE_CMD_FUNC(&LFRArr::CommandMaxFlowNum), Command::THREAD_UNSAFE},
+    {"set_oo_timeout", "LFRArrOOTimeoutArg",
+     MODULE_CMD_FUNC(&LFRArr::CommandOOTimeout), Command::THREAD_UNSAFE}};
 
 LFRArr::LFRArr() : 
       max_queue_size_(kFlowQueueMax),
@@ -171,6 +173,11 @@ CommandResponse LFRArr::CommandOOQueueSize(
 CommandResponse LFRArr::CommandFlowTimeout(
     const bess::pb::LFRArrFlowTimeoutArg &arg) {
   return SetFlowTimeout(arg.flow_timeout());
+}
+
+CommandResponse LFRArr::CommandOOTimeout(
+    const bess::pb::LFRArrOOTimeoutArg &arg) {
+  return SetOOTimeout(arg.oo_timeout());
 }
 
 CommandResponse LFRArr::CommandMaxFlowNum(
@@ -335,51 +342,71 @@ LFRArr::Flow *LFRArr::GetNextFlow(int *err) {
       return nullptr;
     }
 
-    if (llring_empty(f->queue) && !f->next_packet) {
+    if (now - f->pq_timer > oo_timeout_) {
 
-      //std::cerr << "[DEBUG] GetNextFlow: now=" << now 
-      //  << ", f->timer=" << f->timer 
-      //  << ", diff=" << (now - f->timer) << std::endl; 
+      // if (f->state == ACTIVE_MERGE) {
+      //   f->state = LOSS_RECOVERY;
+      //   f->lost_seq = f->expected_next;
+      // }
 
-      // if the flow expired, remove it
+      while (!f->pq.empty()) {
+        p = f->pq.top();
+        f->pq.pop();
+        Enqueue(f, p, err)
+      }
+
+      // *err = llring_dequeue(f->queue, reinterpret_cast<void **>(&p));
+      // f->next_packet = p;
+#ifdef _MY_DEBUG_
+      std::cerr << "[DEBUG] GetNextFlow: oo timeout, PQ evicted" << std::endl;
+#endif
+    }
+
+    else if (llring_empty(f->queue) && !f->next_packet) {
+
+      // if flow.LOSS_REC:
+      //  if OFO_TIMEOUT:
+      //    evict packets
+      // if queue.empty:
+      //  if timeout
+      //    delete flow
+
       if (now - f->timer > flow_timeout_) {
 
 #ifdef _MY_DEBUG_
         std::cerr << "[DEBUG] GetNextFlow: Timer expired" << std::endl;
 #endif
-        
-        if (f->pq.empty()) {
+
+        // if (f->pq.empty()) {
           RemoveFlow(f);
 #ifdef _MY_DEBUG_
           std::cerr << "[DEBUG] GetNextFlow: Flow removed" << std::endl;
 #endif
-          return nullptr;
-        }
-        else {
-          while (!f->pq.empty()) {
-            p = f->pq.top();
-            f->pq.pop();
-            *err = llring_enqueue(f->queue, p);
-          }
-          *err = llring_dequeue(f->queue, reinterpret_cast<void **>(&p));
-          f->next_packet = p;
-#ifdef _MY_DEBUG_
-          std::cerr << "[DEBUG] GetNextFlow: PQ evicted" << std::endl;
-#endif
-        }
+        //   return nullptr;
+        // }
+        // else {
+        //   while (!f->pq.empty()) {
+        //     p = f->pq.top();
+        //     f->pq.pop();
+        //     Enqueue(f, p, err);
+        //   }
+// #ifdef _MY_DEBUG_
+//           std::cerr << "[DEBUG] GetNextFlow: PQ evicted" << std::endl;
+// #endif
+        // }
       } 
 
       else {
         *err = llring_enqueue(flow_ring_, f);
         // if (*err < 0) {
-          return nullptr;
+        return nullptr;
         // }
       }
       
     }
 
-    // f->deficit += quantum_;
-  } else {
+  } 
+  else {
     f = current_flow_;
     current_flow_ = nullptr;
   }
@@ -414,12 +441,6 @@ uint32_t LFRArr::GetNextPackets(bess::PacketBatch *batch, Flow *f, int *err) {
       f->next_packet = nullptr;
     }
 
-    // if (pkt->total_len() > f->deficit) {
-    //   f->next_packet = pkt;
-    //   break;
-    // }
-
-    // f->deficit -= pkt->total_len();
     total_bytes += pkt->total_len();
     batch->add(pkt);
   }
@@ -463,20 +484,12 @@ void LFRArr::AddNewFlow(bess::Packet *pkt, FlowId id, int *err) {
   }
 
   flows_.Insert(id, f);
+
 #ifdef _MY_DEBUG_
   const Tcp * const tcp = GetTCPHeader(pkt);
 
   uint32_t seq = tcp->seq_num.value();
-  // Assumes we only get one SYN and the sequence number of it doesn't change
-  // for any reason.  Also assumes we have no data in the SYN.
-  /*
-  if (tcp->flags & Tcp::Flag::kSyn) {
-    f->expected_next = seq + 1;
-  }
-  else {
-    f->expected_next = seq;
-  }
-  */
+
   std::cerr << "[DEBUG] AddFlow: flow info: " 
     << f->id.src_ip << ":" << f->id.src_port << " -> " 
     << f->id.dst_ip << ":" << f->id.dst_port << std::endl;
@@ -619,6 +632,7 @@ void LFRArr::RunLFRA(Flow * f, bess::Packet * pkt, int * err) {
   // end
   else if (f->pq.size() < max_ofo_buffsize_) {
 
+
 #ifdef _MY_DEBUG_
     std::cerr << "[DEBUG] LFRA: re-sequencing buffer is not full" << std::endl;
 #endif
@@ -681,7 +695,7 @@ void LFRArr::RunLFRA(Flow * f, bess::Packet * pkt, int * err) {
       Enqueue(f, pkt, err);
     }
   }
-  f->timer = get_epoch_time();
+  f->pq_timer = get_epoch_time();
 
   return;
 }
@@ -837,6 +851,14 @@ CommandResponse LFRArr::SetFlowTimeout(double tout) {
     return CommandFailure(EINVAL, "Flow timeout must be positive");
   }
   flow_timeout_ = tout;
+  return CommandSuccess();
+}
+
+CommandResponse LFRArr::SetOOTimeout(double tout) {
+  if (tout <= 0) {
+    return CommandFailure(EINVAL, "Out-of-order timeout must be positive");
+  }
+  oo_timeout_ = tout;
   return CommandSuccess();
 }
 
